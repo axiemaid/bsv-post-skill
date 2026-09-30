@@ -12,7 +12,7 @@ const https = require('https');
 const WALLET_PATH = path.join(process.env.HOME, '.openclaw', 'bsv-wallet.json');
 const WOC_BASE = 'https://api.whatsonchain.com/v1/bsv/main';
 const SAT_PER_BSV = 1e8;
-const FEE_RATE = 1; // sat/byte
+const FEE_RATE = 0.005; // ~1 sat per tx under 1KB (BSV miner policy, not 1 sat/byte)
 
 // --- bsv loader (shared with wallet skill) ---
 
@@ -129,25 +129,25 @@ async function cmdPost(text) {
   script.writeOpCode(bsv.OpCode.OP_RETURN);
   script.writeBuffer(dataBuffer);
 
-  // Select UTXOs — OP_RETURN output has no value, just need fee
+  // BSV miners accept ~1 sat total for txs under 1KB
+  // Fee = max(1, ceil(size_bytes / 1000)) sats
+  function calcFee(numInputs, dataLen) {
+    const dataPushSize = dataLen < 76 ? 1 + dataLen :
+                         dataLen < 256 ? 2 + dataLen :
+                         dataLen < 65536 ? 3 + dataLen : 5 + dataLen;
+    const txSize = 10 + 148 * numInputs + 34 * 1 + dataPushSize; // base + inputs + change + OP_RETURN
+    return Math.max(1, Math.ceil(txSize / 1000));
+  }
+
   let selected = [];
   let totalIn = 0;
   for (const u of utxos) {
     selected.push(u);
     totalIn += u.value;
-    // Fee estimate: 148*inputs + 34*change + ~10 + dataPushSize
-    const dataPushSize = dataBuffer.length < 76 ? 1 + dataBuffer.length :
-                         dataBuffer.length < 256 ? 2 + dataBuffer.length :
-                         dataBuffer.length < 65536 ? 3 + dataBuffer.length : 5 + dataBuffer.length;
-    const estFee = (148 * selected.length + 34 * 1 + 10 + dataPushSize) * FEE_RATE;
-    if (totalIn >= estFee) break;
+    if (totalIn >= calcFee(selected.length, dataBuffer.length)) break;
   }
 
-  // Calculate actual fee
-  const dataPushSize = dataBuffer.length < 76 ? 1 + dataBuffer.length :
-                       dataBuffer.length < 256 ? 2 + dataBuffer.length :
-                       dataBuffer.length < 65536 ? 3 + dataBuffer.length : 5 + dataBuffer.length;
-  const fee = (148 * selected.length + 34 * 1 + 10 + dataPushSize) * FEE_RATE;
+  const fee = calcFee(selected.length, dataBuffer.length);
   const change = totalIn - fee;
 
   if (change < 0) {
@@ -178,7 +178,7 @@ async function cmdPost(text) {
     txb.inputFromPubKeyHash(txHashBuf, u.tx_pos, txOut, pubKey);
   }
 
-  txb.setFeePerKbNum(FEE_RATE * 1000);
+  txb.setFeePerKbNum(1); // 1 sat/kB = ~1 sat per tx under 1KB
   txb.build({ useAllInputs: true });
   for (let i = 0; i < selected.length; i++) {
     txb.signWithKeyPairs([keyPair]);
