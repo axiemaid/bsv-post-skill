@@ -1,0 +1,12 @@
+{
+  "name": "bsv-post-skill",
+  "version": "1.0.0",
+  "description": "Post permanent messages on the BSV blockchain",
+  "main": "scripts/post.cjs",
+  "scripts": {
+    "post": "node scripts/post.cjs"
+  },
+  "dependencies": {
+    "bsv": "^2.0.0"
+  }
+}
